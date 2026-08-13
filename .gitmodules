@@ -1,0 +1,3 @@
+[submodule "frontend/ProcureX"]
+	path = frontend/ProcureX
+	url = https://github.com/QuantbitERP/ProcureX.git

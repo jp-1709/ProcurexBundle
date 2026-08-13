@@ -5,22 +5,22 @@ Lifecycle hooks for ProcureX Bundle.
 
 What happens on  bench --site <site> install-app procurex_bundle
 ----------------------------------------------------------------
-1. [BACKEND]   bench get-app procurex  https://github.com/QuantbitERP/ProcureX-Backend.git
-               bench --site <site> install-app procurex          ← Frappe handles this via
-               required_apps = ["procurex"] in hooks.py
+1. [BACKEND]   bench get-app procurex https://github.com/QuantbitERP/ProcureX-Backend.git
+               bench --site <site> install-app procurex
+               (only if procurex is not already installed on this site)
 
-2. [FRONTEND]  git clone https://github.com/QuantbitERP/ProcureX.git
-               into  apps/procurex_bundle/frontend/ProcureX/
+2. [FRONTEND]  The ProcureX frontend source is already embedded in this repo at
+               frontend/ProcureX/  (git submodule — no git clone needed here)
 
-3. [BUILD]     cd frontend/ProcureX && npm install && npm run build
-               Vite writes the built output directly into
+               cd frontend/ProcureX && npm install && npm run build
+               Vite writes the built output directly into:
                apps/procurex_bundle/procurex_bundle/public/procurex/
-               (configured via outDir in the frontend's vite.config.ts)
+               (configured in frontend/ProcureX/vite.config.ts via outDir)
 
-4. [REGISTER]  bench build --app procurex_bundle
-               makes Frappe aware of the new assets
+3. [REGISTER]  bench build --app procurex_bundle
 
-Pattern reference: apps/erp_ui  (ERP-CUSTOM-UI frontend inside erp_ui/frontend/)
+Pattern reference: apps/erp_ui  (ERP-CUSTOM-UI embedded at erp_ui/frontend/ERP-CUSTOM-UI/,
+                   builds directly to erp_ui/public/ui/ via vite.config.ts outDir)
 """
 
 import logging
@@ -34,14 +34,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Repository constants
 # ---------------------------------------------------------------------------
-FRONTEND_REPO   = "https://github.com/QuantbitERP/ProcureX.git"
-FRONTEND_BRANCH = "main"
+BACKEND_REPO        = "https://github.com/QuantbitERP/ProcureX-Backend.git"
+BACKEND_APP_NAME    = "procurex"
+BACKEND_BRANCH      = "main"
 
-# The frontend is cloned into:
-#   <bench>/apps/procurex_bundle/frontend/ProcureX/
-# Its vite.config.ts must have:
-#   build: { outDir: "../../procurex_bundle/public/procurex" }
-FRONTEND_CLONE_DIR_NAME = "ProcureX"
+# The frontend lives at  apps/procurex_bundle/frontend/ProcureX/  (git submodule)
+# Its vite.config.ts has outDir: "../../procurex_bundle/public/procurex"
+FRONTEND_DIR_NAME   = "ProcureX"
 
 
 # ---------------------------------------------------------------------------
@@ -51,35 +50,41 @@ FRONTEND_CLONE_DIR_NAME = "ProcureX"
 def after_install():
     """Called once by `bench install-app procurex_bundle`."""
     frappe = _frappe()
-    frappe.msgprint("ProcureX Bundle: setting up frontend…", alert=True)
     try:
-        _setup_frontend(frappe)
+        # Step 1: Install backend Frappe app (procurex) if not already present
+        _install_backend(frappe)
+
+        # Step 2: Build the frontend (source already embedded as submodule)
+        frappe.msgprint("ProcureX Bundle: building frontend…", alert=True)
+        _build_frontend(frappe)
+
         frappe.msgprint(
-            "✅ ProcureX Bundle installed. Open /procurex to launch the app.",
+            "✅ ProcureX Bundle installed successfully. "
+            "Navigate to /procurex to launch the app.",
             alert=True,
         )
     except Exception as exc:
         logger.exception("ProcureX Bundle after_install failed")
         frappe.log_error(str(exc), "ProcureX Bundle Install Error")
         frappe.msgprint(
-            f"⚠️  ProcureX Bundle frontend setup failed — {exc}\n"
-            "Run the steps manually (see README) then: bench build --app procurex_bundle",
+            f"⚠️  ProcureX Bundle setup failed — {exc}\n"
+            "Fix the issue then run: bench build --app procurex_bundle",
             indicator="orange",
             alert=True,
         )
 
 
 def after_migrate():
-    """Called on every `bench migrate` — re-clones / rebuilds if needed."""
+    """Called on every `bench migrate` — rebuilds frontend assets if needed."""
     frappe = _frappe()
     try:
-        _setup_frontend(frappe)
+        _build_frontend(frappe)
     except Exception as exc:
-        logger.warning("ProcureX Bundle after_migrate setup failed: %s", exc)
+        logger.warning("ProcureX Bundle after_migrate build failed: %s", exc)
 
 
 def before_uninstall():
-    """Remove the built public assets so no stale files remain."""
+    """Remove the built public assets on uninstall."""
     bench_path   = _bench_path()
     public_built = os.path.join(
         bench_path, "apps", "procurex_bundle",
@@ -91,104 +96,120 @@ def before_uninstall():
 
 
 # ---------------------------------------------------------------------------
-# Core setup — mirrors exactly how erp_ui handles its ERP-CUSTOM-UI frontend
+# Backend installation
 # ---------------------------------------------------------------------------
 
-def _setup_frontend(frappe):
+def _install_backend(frappe):
     """
-    1. git clone (or pull) ProcureX frontend into frontend/ProcureX/
-    2. npm install  (or bun install)
-    3. npm run build  → Vite writes directly to procurex_bundle/public/procurex/
-    4. bench build --app procurex_bundle
+    Use bench get-app to fetch the procurex backend app from GitHub,
+    then install it on the current site — only if not already installed.
+    """
+    bench_path = _bench_path()
+    site       = frappe.local.site
+
+    # Check if already installed on this site
+    installed_apps = frappe.get_installed_apps()
+    if BACKEND_APP_NAME in installed_apps:
+        logger.info("ProcureX Bundle: procurex already installed, skipping")
+        return
+
+    frappe.msgprint(
+        "ProcureX Bundle: fetching procurex backend app from GitHub…",
+        alert=True,
+    )
+
+    # Check if the app is already fetched (bench get-app already run)
+    backend_app_dir = os.path.join(bench_path, "apps", BACKEND_APP_NAME)
+    if not os.path.isdir(backend_app_dir):
+        _run(
+            f"bench get-app {BACKEND_APP_NAME} {BACKEND_REPO} --branch {BACKEND_BRANCH}",
+            cwd=bench_path,
+            label="bench get-app procurex",
+        )
+
+    # Install the backend app on the current site
+    _run(
+        f"bench --site {site} install-app {BACKEND_APP_NAME}",
+        cwd=bench_path,
+        label="bench install-app procurex",
+    )
+
+    logger.info("ProcureX Bundle: procurex backend installed on site %s", site)
+
+
+# ---------------------------------------------------------------------------
+# Frontend build — source is already embedded as a git submodule
+# ---------------------------------------------------------------------------
+
+def _build_frontend(frappe):
+    """
+    Build the ProcureX React frontend from  frontend/ProcureX/
+    (already in the repo as a git submodule — no git clone needed).
+
+    Vite writes the output directly to  procurex_bundle/public/procurex/
+    as configured in frontend/ProcureX/vite.config.ts:
+        build: { outDir: "../../procurex_bundle/public/procurex" }
     """
     conf = frappe.conf
 
-    # --- optional overrides via site_config.json or environment ---
-    repo_url = (
-        conf.get("procurex_frontend_repo")
-        or os.environ.get("PROCUREX_FRONTEND_REPO")
-        or FRONTEND_REPO
-    )
-    branch = (
-        conf.get("procurex_frontend_branch")
-        or os.environ.get("PROCUREX_FRONTEND_BRANCH")
-        or FRONTEND_BRANCH
-    )
     skip_build = bool(int(
         conf.get("procurex_skip_build", 0)
         or os.environ.get("PROCUREX_SKIP_BUILD", "0")
     ))
+    if skip_build:
+        logger.info("ProcureX Bundle: procurex_skip_build=1, skipping build")
+        return
 
     bench_path   = _bench_path()
     app_root     = os.path.join(bench_path, "apps", "procurex_bundle")
 
-    # Where we clone the frontend repo — same layout as erp_ui/frontend/ERP-CUSTOM-UI
-    frontend_dir = os.path.join(app_root, "frontend", FRONTEND_CLONE_DIR_NAME)
+    # Frontend source — embedded at  apps/procurex_bundle/frontend/ProcureX/
+    frontend_dir = os.path.join(app_root, "frontend", FRONTEND_DIR_NAME)
 
-    # 1. Clone or pull
-    _clone_or_pull(repo_url, branch, frontend_dir)
+    if not os.path.isdir(frontend_dir):
+        raise RuntimeError(
+            f"Frontend source not found at {frontend_dir}.\n"
+            "Make sure you cloned the repo with submodules:\n"
+            "  git clone --recurse-submodules <bundle-repo-url>"
+        )
 
-    if skip_build:
-        logger.info("ProcureX Bundle: procurex_skip_build=1, skipping npm build")
-        return
-
-    # 2. Detect package manager (bun preferred if bun.lock present, else npm)
+    # Detect package manager (bun preferred if bun.lock present, else npm)
     node_bin = _detect_node_binary(conf, frontend_dir)
 
-    # 3. Install dependencies
-    _run(f"{node_bin} install", cwd=frontend_dir, label="install deps")
+    # Install dependencies
+    _run(f"{node_bin} install", cwd=frontend_dir, label="npm install")
 
-    # 4. Build — Vite writes directly into procurex_bundle/public/procurex/
-    #    (outDir in vite.config.ts must be set to "../../procurex_bundle/public/procurex")
-    _run(f"{node_bin} run build", cwd=frontend_dir, label="vite build")
+    # Build — Vite writes directly to procurex_bundle/public/procurex/
+    _run(f"{node_bin} run build", cwd=frontend_dir, label="npm run build")
 
-    # Sanity check — confirm build output landed where expected
+    # Sanity check: verify the output landed where we expect
     expected_output = os.path.join(
         app_root, "procurex_bundle", "public", "procurex"
     )
     if not os.path.isdir(expected_output):
         raise RuntimeError(
             f"Build did not produce output at {expected_output}.\n"
-            f"Make sure the frontend's vite.config.ts has:\n"
-            f'  build: {{ outDir: "../../procurex_bundle/public/procurex" }}'
+            "Check that frontend/ProcureX/vite.config.ts has:\n"
+            '  build: { outDir: "../../procurex_bundle/public/procurex" }'
         )
 
-    # 5. Register assets with Frappe
+    # Register the built assets with Frappe
     _run(
         "bench build --app procurex_bundle",
         cwd=bench_path,
         label="bench build",
-        check=False,   # non-fatal; assets may already be registered
+        check=False,  # non-fatal
     )
 
-    logger.info("ProcureX Bundle: frontend ready at /procurex")
+    logger.info("ProcureX Bundle: frontend built and registered at /procurex")
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _clone_or_pull(repo_url: str, branch: str, target_dir: str):
-    """Clone the repo if missing, otherwise fetch + reset to latest."""
-    if os.path.isdir(os.path.join(target_dir, ".git")):
-        logger.info("ProcureX Bundle: pulling latest frontend from %s", repo_url)
-        _run(f"git -C {target_dir} fetch origin", label="git fetch")
-        _run(
-            f"git -C {target_dir} reset --hard origin/{branch}",
-            label="git reset",
-        )
-    else:
-        logger.info("ProcureX Bundle: cloning frontend from %s", repo_url)
-        parent = os.path.dirname(target_dir)
-        os.makedirs(parent, exist_ok=True)
-        _run(
-            f"git clone --depth 1 --branch {branch} {repo_url} {target_dir}",
-            label="git clone",
-        )
-
-
 def _detect_node_binary(conf, cwd: str) -> str:
-    """Prefer bun if bun.lock present and bun is on PATH, otherwise use npm."""
+    """Prefer bun if bun.lock is present and bun is on PATH, otherwise use npm."""
     override = conf.get("procurex_node_binary") or os.environ.get("PROCUREX_NODE_BINARY")
     if override:
         return override
@@ -208,7 +229,7 @@ def _bench_path() -> str:
 
 
 def _run(cmd: str, cwd: str = None, label: str = "", check: bool = True):
-    """Run a shell command, streaming output to stdout/stderr."""
+    """Run a shell command, streaming output, raising RuntimeError on failure."""
     logger.info("ProcureX Bundle [%s]: %s", label or cmd, cmd)
     result = subprocess.run(cmd, shell=True, cwd=cwd)
     if check and result.returncode != 0:

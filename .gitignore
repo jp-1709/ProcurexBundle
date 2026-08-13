@@ -6,11 +6,14 @@ dist/
 build/
 .eggs/
 
-# Node / frontend build artifacts (rebuilt on install)
-procurex_bundle/frontend/
-procurex_bundle/public/procurex_app/
+# Built frontend assets (regenerated on install via npm run build)
+procurex_bundle/public/procurex/
+
+# Node (inside the submodule — excluded from root .gitignore scope)
 node_modules/
 
 # Frappe
 *.pyc
 .DS_Store
+
+# NOTE: frontend/ProcureX/ is a git submodule — it is tracked, NOT ignored.
