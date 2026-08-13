@@ -157,12 +157,24 @@ def _install_backend(frappe):
 
 def _build_frontend(frappe):
     """
-    Build the ProcureX React frontend from  frontend/ProcureX/
+    Build the ProcureX React/TanStack Start frontend from  frontend/ProcureX/
     (already in the repo as a git submodule — no git clone needed).
 
-    Vite writes the output directly to  procurex_bundle/public/procurex/
-    as configured in frontend/ProcureX/vite.config.ts:
-        build: { outDir: "../../procurex_bundle/public/procurex" }
+    TanStack Start build output structure
+    --------------------------------------
+    `npm run build` (via @lovable.dev/vite-tanstack-config + nitro) produces:
+
+        frontend/ProcureX/.output/
+            public/         ← static client-side assets (JS, CSS, favicon)
+                assets/
+                    index-[hash].js
+                    index-[hash].css
+                    ...
+            server/         ← Node.js SSR server (NOT used by Frappe)
+
+    We copy  .output/public/  →  procurex_bundle/public/procurex/
+    Frappe then serves these at  /assets/procurex_bundle/procurex/
+    and our www/procurex.html shell loads them.
     """
     conf = frappe.conf
 
@@ -187,35 +199,54 @@ def _build_frontend(frappe):
             "  git clone --recurse-submodules <bundle-repo-url>"
         )
 
-    # Detect package manager (bun preferred if bun.lock present, else npm)
+    # Detect package manager (bun preferred if bun.lock present AND bun is on PATH)
     node_bin = _detect_node_binary(conf, frontend_dir)
 
-    # Install dependencies
-    _run(f"{node_bin} install", cwd=frontend_dir, label="npm install")
+    # Step 1 — Install dependencies
+    _run(f"{node_bin} install", cwd=frontend_dir, label=f"{node_bin} install")
 
-    # Build — Vite writes directly to procurex_bundle/public/procurex/
-    _run(f"{node_bin} run build", cwd=frontend_dir, label="npm run build")
+    # Step 2 — Build
+    # TanStack Start writes its output to  frontend/ProcureX/.output/
+    # (controlled by nitro, not vite outDir)
+    _run(f"{node_bin} run build", cwd=frontend_dir, label=f"{node_bin} run build")
 
-    # Sanity check: verify the output landed where we expect
-    expected_output = os.path.join(
-        app_root, "procurex_bundle", "public", "procurex"
-    )
-    if not os.path.isdir(expected_output):
+    # Step 3 — Copy .output/public/ → procurex_bundle/public/procurex/
+    #
+    # TanStack Start produces:
+    #   .output/public/   ← static assets Frappe needs to serve
+    #   .output/server/   ← SSR Node server (not used here)
+    #
+    built_public = os.path.join(frontend_dir, ".output", "public")
+    if not os.path.isdir(built_public):
         raise RuntimeError(
-            f"Build did not produce output at {expected_output}.\n"
-            "Check that frontend/ProcureX/vite.config.ts has:\n"
-            '  build: { outDir: "../../procurex_bundle/public/procurex" }'
+            f"Build did not produce .output/public/ at {built_public}.\n"
+            "Expected TanStack Start output structure:\n"
+            "  .output/public/assets/index-[hash].js\n"
+            "  .output/public/assets/index-[hash].css"
         )
 
-    # Register the built assets with Frappe
+    dest_public = os.path.join(
+        app_root, "procurex_bundle", "public", "procurex"
+    )
+    if os.path.exists(dest_public):
+        shutil.rmtree(dest_public)
+    shutil.copytree(built_public, dest_public)
+    logger.info(
+        "ProcureX Bundle: copied .output/public/ → %s", dest_public
+    )
+
+    # Step 4 — Register the built assets with Frappe
+    # Use bench CLI (bench build handles yarn/esbuild asset linking)
     _run(
         "bench build --app procurex_bundle",
         cwd=bench_path,
-        label="bench build",
-        check=False,  # non-fatal
+        label="bench build --app procurex_bundle",
+        check=False,  # non-fatal — assets may already be linked
     )
 
-    logger.info("ProcureX Bundle: frontend built and registered at /procurex")
+    logger.info("ProcureX Bundle: frontend built and assets registered at /assets/procurex_bundle/procurex/")
+
+
 
 
 # ---------------------------------------------------------------------------
