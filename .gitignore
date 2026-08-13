@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Node / frontend build artifacts (rebuilt on install)
+procurex_bundle/frontend/
+procurex_bundle/public/procurex_app/
+node_modules/
+
+# Frappe
+*.pyc
+.DS_Store
