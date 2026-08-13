@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 BACKEND_REPO        = "https://github.com/QuantbitERP/ProcureX-Backend.git"
 BACKEND_APP_NAME    = "procurex"
-BACKEND_BRANCH      = "main"
+# No branch specified — bench will auto-detect the repo's default branch
 
 # The frontend lives at  apps/procurex_bundle/frontend/ProcureX/  (git submodule)
 # Its vite.config.ts has outDir: "../../procurex_bundle/public/procurex"
@@ -101,16 +101,25 @@ def before_uninstall():
 
 def _install_backend(frappe):
     """
-    Use bench get-app to fetch the procurex backend app from GitHub,
-    then install it on the current site — only if not already installed.
+    Fetch the procurex backend app via bench get-app, then install it on the
+    current site using frappe.installer.install_app() directly.
+
+    WHY NOT `bench --site <site> install-app`?
+    ------------------------------------------
+    Running `bench --site install-app` from inside an after_install hook causes
+    a deadlock: the outer `bench install-app procurex_bundle` already holds
+    `install_app.lock`, and the inner call tries to acquire the same lock.
+
+    Using frappe.installer.install_app() bypasses the CLI lock entirely and
+    installs the app within the same running Frappe context — this is exactly
+    what `bench install-app` does internally after acquiring the lock.
     """
     bench_path = _bench_path()
-    site       = frappe.local.site
 
     # Check if already installed on this site
     installed_apps = frappe.get_installed_apps()
     if BACKEND_APP_NAME in installed_apps:
-        logger.info("ProcureX Bundle: procurex already installed, skipping")
+        logger.info("ProcureX Bundle: procurex already installed on this site, skipping")
         return
 
     frappe.msgprint(
@@ -118,23 +127,28 @@ def _install_backend(frappe):
         alert=True,
     )
 
-    # Check if the app is already fetched (bench get-app already run)
+    # Step 1 — fetch the app source if not already on disk
     backend_app_dir = os.path.join(bench_path, "apps", BACKEND_APP_NAME)
     if not os.path.isdir(backend_app_dir):
+        # bench get-app is a bench-level operation (no site lock) — safe to call
         _run(
-            f"bench get-app {BACKEND_APP_NAME} {BACKEND_REPO} --branch {BACKEND_BRANCH}",
+            f"bench get-app {BACKEND_APP_NAME} {BACKEND_REPO}",
             cwd=bench_path,
             label="bench get-app procurex",
         )
 
-    # Install the backend app on the current site
-    _run(
-        f"bench --site {site} install-app {BACKEND_APP_NAME}",
-        cwd=bench_path,
-        label="bench install-app procurex",
-    )
+    # Step 2 — install the app on the current site using Frappe's internal API.
+    # This is exactly what `bench --site install-app` calls after acquiring the
+    # lock — we skip the lock because we are already inside a locked context.
+    try:
+        from frappe.installer import install_app as _frappe_install_app
+        _frappe_install_app(BACKEND_APP_NAME)
+        logger.info("ProcureX Bundle: procurex backend installed successfully")
+    except Exception as exc:
+        raise RuntimeError(
+            f"ProcureX Bundle: failed to install procurex on site — {exc}"
+        ) from exc
 
-    logger.info("ProcureX Bundle: procurex backend installed on site %s", site)
 
 
 # ---------------------------------------------------------------------------
