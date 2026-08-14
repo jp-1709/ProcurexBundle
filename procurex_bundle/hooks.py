@@ -7,9 +7,9 @@ app_license = "mit"
 app_version = "0.0.1"
 
 # ---------------------------------------------------------------------------
-# Required apps — Frappe will enforce procurex is installed on the site first
+# Note: Backend app (procurex) is fetched via bench get-app and installed
+# on the site directly in before_install hook in install.py.
 # ---------------------------------------------------------------------------
-required_apps = ["procurex"]
 
 
 # ---------------------------------------------------------------------------

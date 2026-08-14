@@ -50,69 +50,32 @@ FRONTEND_DIR_NAME   = "ProcureX"
 def before_install():
     """
     Called before procurex_bundle is installed on the site.
-    Ensures procurex backend app is fetched into the bench directory.
-    Frappe's required_apps will then automatically install procurex on the site.
+    1. Ensures procurex backend app is fetched into the bench apps/ directory.
+    2. Installs procurex backend on the current site if not already installed.
     """
     frappe = _frappe()
-    _ensure_backend_fetched(frappe)
-
-
-def after_install():
-    """Called once by `bench install-app procurex_bundle` after site install."""
-    frappe = _frappe()
-    frappe.msgprint("ProcureX Bundle: building frontend…", alert=True)
-    try:
-        # Build the frontend (source already embedded as submodule)
-        _build_frontend(frappe)
-
-        frappe.msgprint(
-            "✅ ProcureX Bundle installed successfully. "
-            "Navigate to /procurex to launch the app.",
-            alert=True,
-        )
-    except Exception as exc:
-        logger.exception("ProcureX Bundle after_install failed")
-        frappe.log_error(str(exc), "ProcureX Bundle Install Error")
-        frappe.msgprint(
-            f"⚠️  ProcureX Bundle setup failed — {exc}\n"
-            "Fix the issue then run: bench build --app procurex_bundle",
-            indicator="orange",
-            alert=True,
-        )
-
-
-def after_migrate():
-    """Called on every `bench migrate` — rebuilds frontend assets if needed."""
-    frappe = _frappe()
-    try:
-        _build_frontend(frappe)
-    except Exception as exc:
-        logger.warning("ProcureX Bundle after_migrate build failed: %s", exc)
-
-
-def before_uninstall():
-    """Remove the built public assets on uninstall."""
-    bench_path   = _bench_path()
-    public_built = os.path.join(
-        bench_path, "apps", "procurex_bundle",
-        "procurex_bundle", "public", "procurex"
-    )
-    if os.path.exists(public_built):
-        shutil.rmtree(public_built)
-        logger.info("ProcureX Bundle: removed built assets at %s", public_built)
+    _install_backend(frappe)
 
 
 # ---------------------------------------------------------------------------
-# Backend fetching
+# Backend fetching & installation
 # ---------------------------------------------------------------------------
 
-def _ensure_backend_fetched(frappe):
+def _install_backend(frappe):
     """
-    Fetch the procurex backend app via bench get-app if not present in apps/ directory.
+    Fetch procurex backend app via bench get-app if missing from bench,
+    then install it on the current site using frappe.installer.install_app() directly.
+
+    Why direct frappe.installer.install_app() call?
+    ----------------------------------------------
+    Calling `bench --site install-app` from inside Python triggers CLI filelocks.
+    Calling `frappe.installer.install_app("procurex")` directly runs inside the
+    active site session and installs procurex without any lock collisions.
     """
     bench_path = _bench_path()
-    backend_app_dir = os.path.join(bench_path, "apps", BACKEND_APP_NAME)
 
+    # Step 1 — Fetch app to bench if apps/procurex missing
+    backend_app_dir = os.path.join(bench_path, "apps", BACKEND_APP_NAME)
     if not os.path.isdir(backend_app_dir):
         frappe.msgprint(
             "ProcureX Bundle: fetching procurex backend app from GitHub…",
@@ -124,6 +87,24 @@ def _ensure_backend_fetched(frappe):
             label="bench get-app procurex",
         )
         logger.info("ProcureX Bundle: procurex backend fetched to bench")
+
+    # Step 2 — Install procurex on the current site if not already installed
+    installed_apps = frappe.get_installed_apps()
+    if BACKEND_APP_NAME not in installed_apps:
+        frappe.msgprint(
+            "ProcureX Bundle: installing procurex backend on site…",
+            alert=True,
+        )
+        try:
+            from frappe.installer import install_app as _frappe_install_app
+            _frappe_install_app(BACKEND_APP_NAME)
+            logger.info("ProcureX Bundle: procurex backend installed successfully on site")
+        except Exception as exc:
+            logger.exception("ProcureX Bundle: failed to install backend procurex app")
+            raise RuntimeError(
+                f"ProcureX Bundle: failed to install procurex backend on site — {exc}"
+            ) from exc
+
 
 
 
