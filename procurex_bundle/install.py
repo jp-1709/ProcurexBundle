@@ -50,11 +50,16 @@ FRONTEND_DIR_NAME   = "ProcureX"
 def before_install():
     """
     Called before procurex_bundle is installed on the site.
-    1. Ensures procurex backend app is fetched into the bench apps/ directory.
-    2. Installs procurex backend on the current site if not already installed.
+    1. Ensures procurex backend app is fetched into the bench apps/ directory and installed.
+    2. Ensures frontend/ProcureX source is populated (git submodule or clone).
     """
     frappe = _frappe()
     _install_backend(frappe)
+
+    bench_path   = _bench_path()
+    app_root     = os.path.join(bench_path, "apps", "procurex_bundle")
+    frontend_dir = os.path.join(app_root, "frontend", FRONTEND_DIR_NAME)
+    _ensure_frontend_source(app_root, frontend_dir)
 
 
 def after_install():
@@ -266,12 +271,19 @@ def _ensure_frontend_source(app_root: str, frontend_dir: str):
     if not os.path.isfile(package_json):
         logger.info("ProcureX Bundle: cloning ProcureX frontend repository...")
         if os.path.exists(frontend_dir):
-            shutil.rmtree(frontend_dir, ignore_errors=True)
+            if os.path.isdir(frontend_dir):
+                shutil.rmtree(frontend_dir, ignore_errors=True)
+            else:
+                try:
+                    os.remove(frontend_dir)
+                except Exception:
+                    pass
         os.makedirs(os.path.dirname(frontend_dir), exist_ok=True)
         _run(
-            f"git clone --depth 1 https://github.com/QuantbitERP/ProcureX.git {frontend_dir}",
+            f'git clone --depth 1 https://github.com/QuantbitERP/ProcureX.git "{frontend_dir}"',
             label="git clone frontend",
         )
+
 
     if not os.path.isfile(package_json):
         raise RuntimeError(
