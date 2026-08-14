@@ -194,13 +194,14 @@ def _build_frontend(frappe):
     # Detect package manager (bun preferred if bun.lock present AND bun is on PATH)
     node_bin = _detect_node_binary(conf, frontend_dir)
 
-    # Step 1 — Install dependencies
-    _run(f"{node_bin} install", cwd=frontend_dir, label=f"{node_bin} install")
+    # Step 1 — Install dependencies (ensure devDependencies like vite are included)
+    install_cmd = f"{node_bin} install --include=dev" if node_bin == "npm" else f"{node_bin} install"
+    _run(install_cmd, cwd=frontend_dir, label=f"{node_bin} install")
 
     # Step 2 — Build
     # TanStack Start writes its output to  frontend/ProcureX/.output/
-    # (controlled by nitro, not vite outDir)
     _run(f"{node_bin} run build", cwd=frontend_dir, label=f"{node_bin} run build")
+
 
     # Step 3 — Copy .output/public/ → procurex_bundle/public/procurex/
     #
@@ -316,12 +317,18 @@ def _bench_path() -> str:
 def _run(cmd: str, cwd: str = None, label: str = "", check: bool = True):
     """Run a shell command, streaming output, raising RuntimeError on failure."""
     logger.info("ProcureX Bundle [%s]: %s", label or cmd, cmd)
-    result = subprocess.run(cmd, shell=True, cwd=cwd)
+
+    # Ensure NODE_ENV is development so npm does not omit devDependencies like vite
+    cmd_env = os.environ.copy()
+    cmd_env["NODE_ENV"] = "development"
+
+    result = subprocess.run(cmd, shell=True, cwd=cwd, env=cmd_env)
     if check and result.returncode != 0:
         raise RuntimeError(
             f"ProcureX Bundle: '{label or cmd}' failed (exit {result.returncode})"
         )
     return result
+
 
 
 def _frappe():
