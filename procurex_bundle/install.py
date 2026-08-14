@@ -57,6 +57,32 @@ def before_install():
     _install_backend(frappe)
 
 
+def after_install():
+    """Called once after procurex_bundle is installed."""
+    frappe = _frappe()
+    frappe.msgprint(
+        "✅ ProcureX Bundle installed successfully.",
+        alert=True,
+    )
+
+
+def after_migrate():
+    """Called on every bench migrate."""
+    pass
+
+
+def before_uninstall():
+    """Remove built public assets on uninstall."""
+    bench_path = _bench_path()
+    public_built = os.path.join(
+        bench_path, "apps", "procurex_bundle",
+        "procurex_bundle", "public", "procurex"
+    )
+    if os.path.exists(public_built):
+        shutil.rmtree(public_built)
+        logger.info("ProcureX Bundle: removed built assets at %s", public_built)
+
+
 # ---------------------------------------------------------------------------
 # Backend fetching & installation
 # ---------------------------------------------------------------------------
@@ -96,6 +122,12 @@ def _install_backend(frappe):
             alert=True,
         )
         try:
+            import sys
+            import importlib
+            if backend_app_dir not in sys.path:
+                sys.path.insert(0, backend_app_dir)
+            importlib.invalidate_caches()
+
             from frappe.installer import install_app as _frappe_install_app
             _frappe_install_app(BACKEND_APP_NAME)
             logger.info("ProcureX Bundle: procurex backend installed successfully on site")
