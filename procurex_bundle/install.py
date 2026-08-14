@@ -182,12 +182,9 @@ def _build_frontend(frappe):
     # Frontend source — embedded at  apps/procurex_bundle/frontend/ProcureX/
     frontend_dir = os.path.join(app_root, "frontend", FRONTEND_DIR_NAME)
 
-    if not os.path.isdir(frontend_dir):
-        raise RuntimeError(
-            f"Frontend source not found at {frontend_dir}.\n"
-            "Make sure you cloned the repo with submodules:\n"
-            "  git clone --recurse-submodules <bundle-repo-url>"
-        )
+    # Automatically initialize git submodule or clone frontend if missing/empty
+    _ensure_frontend_source(app_root, frontend_dir)
+
 
     # Detect package manager (bun preferred if bun.lock present AND bun is on PATH)
     node_bin = _detect_node_binary(conf, frontend_dir)
@@ -243,7 +240,48 @@ def _build_frontend(frappe):
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _ensure_frontend_source(app_root: str, frontend_dir: str):
+    """
+    Ensures that the ProcureX frontend source code exists at frontend/ProcureX/.
+    If package.json is missing (e.g. when app was cloned without --recurse-submodules via bench get-app):
+      1. Tries `git submodule update --init --recursive`
+      2. If still missing, falls back to cloning ProcureX directly into frontend/ProcureX/
+    """
+    package_json = os.path.join(frontend_dir, "package.json")
+    if os.path.isfile(package_json):
+        return
+
+    logger.info("ProcureX Bundle: frontend source missing package.json, initializing git submodule...")
+
+    # Step 1: Attempt git submodule update
+    if os.path.isdir(os.path.join(app_root, ".git")):
+        _run(
+            "git submodule update --init --recursive",
+            cwd=app_root,
+            label="git submodule update",
+            check=False,
+        )
+
+    # Step 2: If package.json is still missing, fallback to direct git clone
+    if not os.path.isfile(package_json):
+        logger.info("ProcureX Bundle: cloning ProcureX frontend repository...")
+        if os.path.exists(frontend_dir):
+            shutil.rmtree(frontend_dir, ignore_errors=True)
+        os.makedirs(os.path.dirname(frontend_dir), exist_ok=True)
+        _run(
+            f"git clone --depth 1 https://github.com/QuantbitERP/ProcureX.git {frontend_dir}",
+            label="git clone frontend",
+        )
+
+    if not os.path.isfile(package_json):
+        raise RuntimeError(
+            f"ProcureX Bundle: Failed to fetch frontend source code into {frontend_dir}.\n"
+            "Please check git / internet access and try again."
+        )
+
+
 def _detect_node_binary(conf, cwd: str) -> str:
+
     """Prefer bun if bun.lock is present and bun is on PATH, otherwise use npm."""
     override = conf.get("procurex_node_binary") or os.environ.get("PROCUREX_NODE_BINARY")
     if override:
