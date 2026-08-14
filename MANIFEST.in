@@ -1,6 +1,0 @@
-include MANIFEST.in
-include README.md
-include LICENSE
-recursive-include procurex_bundle *.py *.html *.js *.css *.json *.txt *.png *.svg *.ico
-prune procurex_bundle/frontend
-prune procurex_bundle/public/procurex_app
