@@ -7,10 +7,10 @@ app_license = "mit"
 app_version = "0.0.1"
 
 # ---------------------------------------------------------------------------
-# Note: procurex (backend) is NOT listed in required_apps.
-# It is fetched and installed automatically by the after_install hook in
-# install.py via:  bench get-app procurex  +  bench install-app procurex
+# Required apps — Frappe will enforce procurex is installed on the site first
 # ---------------------------------------------------------------------------
+required_apps = ["procurex"]
+
 
 # ---------------------------------------------------------------------------
 # Website Route Rules
@@ -36,6 +36,7 @@ add_to_apps_screen = [
 # ---------------------------------------------------------------------------
 # Installation Hooks
 # ---------------------------------------------------------------------------
+before_install = "procurex_bundle.install.before_install"
 after_install = "procurex_bundle.install.after_install"
 after_migrate = "procurex_bundle.install.after_migrate"
 
@@ -43,3 +44,4 @@ after_migrate = "procurex_bundle.install.after_migrate"
 # Uninstallation Hooks
 # ---------------------------------------------------------------------------
 before_uninstall = "procurex_bundle.install.before_uninstall"
+
